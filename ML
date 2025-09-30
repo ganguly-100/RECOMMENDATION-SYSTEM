@@ -1,0 +1,128 @@
+# This script builds a simple user-based collaborative filtering recommendation system.
+# It uses cosine similarity to find similar users and predicts ratings to recommend items.
+
+import pandas as pd
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error
+
+# --- 1. Create a Sample Dataset ---
+# In a real-world scenario, this data would come from a database or a CSV file.
+# The data consists of user IDs, movie IDs, and the ratings users have given to movies.
+data = {
+    'user_id': [1, 1, 1, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 5],
+    'item_id': [101, 102, 103, 101, 104, 102, 103, 105, 101, 103, 104, 102, 104, 105, 106],
+    'rating':  [5, 4, 2, 4, 5, 5, 3, 4, 3, 5, 4, 4, 3, 5, 2]
+}
+df = pd.DataFrame(data)
+
+print("--- Sample Raw Data ---")
+print(df)
+print("\n")
+
+
+# --- 2. Split Data for Evaluation ---
+# We split the data to train the model and test its prediction accuracy on unseen ratings.
+train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
+
+print(f"Training set size: {len(train_df)} ratings")
+print(f"Test set size: {len(test_df)} ratings")
+print("\n")
+
+
+# --- 3. Build the User-Item Matrix ---
+# This matrix represents users' ratings for items. Rows are users, columns are items.
+# We use the training data to build this matrix.
+user_item_matrix = train_df.pivot_table(index='user_id', columns='item_id', values='rating').fillna(0)
+
+print("--- User-Item Utility Matrix (from training data) ---")
+print(user_item_matrix)
+print("\n")
+
+
+# --- 4. Calculate User-User Similarity ---
+# We use cosine similarity to measure how similar users are based on their ratings.
+# A similarity of 1 means they are identical, 0 means they are completely different.
+user_similarity = cosine_similarity(user_item_matrix)
+# Convert the result into a DataFrame for better readability.
+user_similarity_df = pd.DataFrame(user_similarity, index=user_item_matrix.index, columns=user_item_matrix.index)
+
+print("--- User-User Similarity Matrix ---")
+print(user_similarity_df)
+print("\n")
+
+
+# --- 5. Make Predictions ---
+# We predict a user's rating for an item based on the weighted average of ratings
+# from other similar users.
+def predict_ratings(user_item_matrix, user_similarity_df):
+    # Sum of similarities for normalization
+    sim_sum = user_similarity_df.sum(axis=1) - 1 # Subtract 1 to exclude self-similarity
+    # Predicted ratings matrix (dot product of similarity and ratings)
+    mean_user_rating = user_item_matrix.mean(axis=1)
+    ratings_diff = (user_item_matrix - mean_user_rating[:, np.newaxis])
+    pred = mean_user_rating[:, np.newaxis] + user_similarity_df.dot(ratings_diff) / (np.array([np.abs(user_similarity_df).sum(axis=1)]).T)
+
+    return pd.DataFrame(pred, index=user_item_matrix.index, columns=user_item_matrix.columns)
+
+# Get predicted ratings for all users and items
+predicted_ratings = predict_ratings(user_item_matrix, user_similarity_df)
+
+print("--- Predicted Ratings Matrix ---")
+print(predicted_ratings)
+print("\n")
+
+
+# --- 6. Generate Recommendations ---
+# Get top N recommendations for a specific user.
+def get_recommendations(user_id, n_recommendations, user_item_matrix, predicted_ratings):
+    # Get the ratings predicted for the target user
+    user_predictions = predicted_ratings.loc[user_id].sort_values(ascending=False)
+
+    # Get the items the user has already rated
+    items_rated_by_user = user_item_matrix.loc[user_id]
+    items_rated_by_user = items_rated_by_user[items_rated_by_user > 0].index
+
+    # Filter out items the user has already rated
+    recommendations = user_predictions[~user_predictions.index.isin(items_rated_by_user)]
+
+    return recommendations.head(n_recommendations)
+
+# Showcase recommendations for User 1
+target_user_id = 1
+n_recommendations = 3
+recommendations = get_recommendations(target_user_id, n_recommendations, user_item_matrix, predicted_ratings)
+
+print(f"--- Top {n_recommendations} Recommendations for User {target_user_id} ---")
+print(recommendations)
+print("\n")
+
+
+# --- 7. Evaluate the Model ---
+# Use the test set to evaluate the model's performance.
+# We calculate the Mean Absolute Error (MAE) between predicted and actual ratings.
+predictions = []
+actuals = []
+
+for _, row in test_df.iterrows():
+    user = row['user_id']
+    item = row['item_id']
+    actual_rating = row['rating']
+
+    # Check if the user and item exist in the training matrix
+    if user in predicted_ratings.index and item in predicted_ratings.columns:
+        predicted_rating = predicted_ratings.loc[user, item]
+        predictions.append(predicted_rating)
+        actuals.append(actual_rating)
+
+# Calculate MAE if there are any testable predictions
+if predictions:
+    mae = mean_absolute_error(actuals, predictions)
+    print("--- Model Evaluation ---")
+    print(f"Mean Absolute Error (MAE) on the test set: {mae:.4f}")
+else:
+    print("--- Model Evaluation ---")
+    print("Could not make predictions for the test set (users/items might not be in the training data).")
+
+print("\n--- Script Finished ---")
